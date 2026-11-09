@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite*
+*.pem
+*.key
+kubeconfig*
+results/
+secrets/

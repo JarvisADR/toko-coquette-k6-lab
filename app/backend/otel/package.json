@@ -1,0 +1,12 @@
+{
+  "name": "petite-bow-tracing",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/sdk-node": "0.223.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.223.0",
+    "@opentelemetry/instrumentation-http": "0.223.0",
+    "@opentelemetry/instrumentation-express": "0.71.1"
+  }
+}

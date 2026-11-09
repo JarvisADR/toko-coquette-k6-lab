@@ -1,0 +1,26 @@
+name: Build and check app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build application images
+        run: |
+          docker build -t coquette-backend:ci app/backend
+          docker build -t coquette-frontend:ci app/frontend
+      - name: Check the four application endpoints
+        run: bash tests/check-app.sh
