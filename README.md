@@ -4,6 +4,8 @@ Lab performa Toko Coquette dengan frontend Nginx, backend Express dan SQLite, se
 
 GitHub Actions membangun image frontend dan backend, lalu mengecek homepage, katalog, login, dan profil dengan database sementara. Workflow CI bisa dijalankan tanpa akses ke VM.
 
+Workflow **Prepare K3s release** dipicu manual dari branch `main`. GitHub Actions memeriksa kedua image dan menyimpannya sebagai artifact bertag commit. Untuk menerapkan release dari PowerShell, login ke GitHub CLI lalu jalankan `./deploy/Deploy-Lab.ps1 -RunId <id> -Vm <user@host>`. Perintah memakai akses SSH VM yang sudah ada. Deployment memakai SQLite yang sudah ada dan kembali ke image sebelumnya jika pemeriksaan HTTP gagal.
+
 ## Isi repo
 
 - `app/` berisi kode aplikasi, Dockerfile, dan instrumentasi tracing.

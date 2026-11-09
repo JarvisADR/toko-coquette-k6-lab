@@ -1,0 +1,46 @@
+name: Prepare K3s release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coquette-k3s-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build and check application
+        run: |
+          docker build -t coquette-backend:ci app/backend
+          docker build -t coquette-frontend:ci app/frontend
+          bash tests/check-app.sh
+      - name: Package the checked images
+        run: |
+          set -euo pipefail
+          mkdir release
+          backend="coquette-ci.invalid/toko-backend:$GITHUB_SHA"
+          frontend="coquette-ci.invalid/toko-frontend:$GITHUB_SHA"
+          docker tag coquette-backend:ci "$backend"
+          docker tag coquette-frontend:ci "$frontend"
+          docker save "$backend" "$frontend" | gzip -1 > release/images.tar.gz
+          test "$(stat -c %s release/images.tar.gz)" -le "$((384 * 1024 * 1024))"
+          digest=$(sha256sum release/images.tar.gz | cut -d ' ' -f 1)
+          printf '%s %s\n' "$GITHUB_SHA" "$digest" > release/release.txt
+      - name: Upload release
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: coquette-k3s-images
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
