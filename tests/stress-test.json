@@ -1,0 +1,118 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "namespace": "k6-lab",
+    "labels": {
+      "app.kubernetes.io/part-of": "k6-on-demand"
+    },
+    "generateName": "k6-stress-"
+  },
+  "spec": {
+    "backoffLimit": 0,
+    "activeDeadlineSeconds": 900,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "k6",
+          "k6-profile": "stress"
+        }
+      },
+      "spec": {
+        "restartPolicy": "Never",
+        "automountServiceAccountToken": false,
+        "terminationGracePeriodSeconds": 20,
+        "containers": [
+          {
+            "name": "k6",
+            "image": "grafana/k6:2.3.0",
+            "imagePullPolicy": "Never",
+            "args": [
+              "exec k6 run --out experimental-prometheus-rw --out \"json=/results/${POD_NAME}.json\" - <<'K6_SCRIPT'\nconst PROFILE = \"stress\";\nconst SCENARIO = {\n  \"executor\": \"ramping-vus\",\n  \"startVUs\": 0,\n  \"stages\": [\n    {\n      \"duration\": \"30s\",\n      \"target\": 25\n    },\n    {\n      \"duration\": \"2m\",\n      \"target\": 25\n    },\n    {\n      \"duration\": \"30s\",\n      \"target\": 50\n    },\n    {\n      \"duration\": \"2m\",\n      \"target\": 50\n    },\n    {\n      \"duration\": \"30s\",\n      \"target\": 100\n    },\n    {\n      \"duration\": \"2m\",\n      \"target\": 100\n    },\n    {\n      \"duration\": \"30s\",\n      \"target\": 125\n    },\n    {\n      \"duration\": \"2m\",\n      \"target\": 125\n    },\n    {\n      \"duration\": \"30s\",\n      \"target\": 150\n    },\n    {\n      \"duration\": \"2m\",\n      \"target\": 150\n    },\n    {\n      \"duration\": \"1m\",\n      \"target\": 0\n    }\n  ],\n  \"gracefulRampDown\": \"15s\",\n  \"gracefulStop\": \"15s\"\n};\n\nimport http from 'k6/http';\nimport { check, sleep } from 'k6';\n\nconst base = 'http://ecommerce-frontend';\nconst email = __ENV.K6_TEST_EMAIL;\nconst password = __ENV.K6_TEST_PASSWORD;\nconst testid = __ENV.POD_NAME;\nconst mode = __ENV.K6_MODE || 'main';\n\nif (!email || !password || !testid || !['main', 'preflight'].includes(mode)) {\n  throw new Error('K6_TEST_EMAIL, K6_TEST_PASSWORD, POD_NAME and a valid K6_MODE are required');\n}\n\nconst names = ['FE_homepage', 'BE_login', 'BE_profile', 'BE_catalog'];\nconst thresholds = {};\nfor (const name of names) {\n  const filter = '{name:' + name + '}';\n  thresholds['http_reqs' + filter] = ['count>0'];\n  thresholds['http_req_duration' + filter] = ['p(95)<1000'];\n  thresholds['http_req_failed' + filter] = mode === 'preflight' ? ['rate==0'] : [\n    'rate<0.01',\n    { threshold: 'rate<0.20', abortOnFail: true, delayAbortEval: '30s' },\n  ];\n  thresholds['checks' + filter] = mode === 'preflight' ? ['rate==1'] : ['rate>=0.99'];\n}\n\nexport const options = {\n  systemTags: ['name'],\n  tags: { testid, profile: PROFILE, mode },\n  scenarios: {\n    customer: mode === 'preflight'\n      ? { executor: 'per-vu-iterations', vus: 1, iterations: 4, maxDuration: '1m' }\n      : SCENARIO,\n  },\n  thresholds,\n};\n\nhttp.setResponseCallback(http.expectedStatuses(200));\n\n// Each VU keeps its own token and returns to the homepage after five catalog visits.\nlet step = 0;\nlet token = '';\nlet catalogVisits = 0;\nlet firstAction = true;\n\nfunction send(method, path, name, valid, body = null, headers = {}) {\n  const response = http.request(method, base + path, body, {\n    headers, timeout: '4s', redirects: 0, tags: { name },\n  });\n  return check(response, {\n    'valid response': (r) => {\n      if (r.status !== 200) return false;\n      try { return valid(r); } catch (_) { return false; }\n    },\n  }, { name });\n}\n\nexport default function () {\n  if (firstAction && mode === 'main') sleep(Math.random() * 8);\n  firstAction = false;\n\n  if (step === 0) {\n    if (send('GET', '/', names[0], (r) => /<html[\\s>]/i.test(r.body || ''))) step = 1;\n  } else if (step === 1) {\n    const ok = send('POST', '/api/auth/login', names[1], (r) => {\n      const value = r.json('token');\n      if (typeof value !== 'string' || !value) return false;\n      token = value;\n      return true;\n    }, JSON.stringify({ email, password }), { 'Content-Type': 'application/json' });\n    step = ok ? 2 : 0;\n  } else if (step === 2) {\n    const ok = send('GET', '/api/auth/me', names[2],\n      (r) => r.json('user.email') === email.trim().toLowerCase(),\n      null, { Authorization: 'Bearer ' + token });\n    if (!ok) token = '';\n    step = ok ? 3 : 0;\n  } else {\n    send('GET', '/api/products', names[3], (r) => {\n      const products = r.json();\n      return Array.isArray(products) && products.length > 0;\n    });\n    if (++catalogVisits === 5) {\n      catalogVisits = 0;\n      token = '';\n      step = 0;\n    }\n  }\n  if (mode === 'main') sleep(1 + Math.random() * 2);\n}\n\nexport function handleSummary(data) {\n  const summary = { profile: PROFILE, mode, testid, scenario: options.scenarios.customer, ...data };\n  const failedThresholds = Object.entries(data.metrics).flatMap(([name, metric]) =>\n    Object.entries(metric.thresholds || {}).filter(([, result]) => !result.ok)\n      .map(([threshold]) => name + ': ' + threshold));\n  return {\n    stdout: JSON.stringify({ profile: PROFILE, mode, testid, failedThresholds }) + '\\n',\n    ['/results/' + testid + '-summary.json']: JSON.stringify(summary, null, 2) + '\\n',\n  };\n}\nK6_SCRIPT\n"
+            ],
+            "env": [
+              {
+                "name": "POD_NAME",
+                "valueFrom": {
+                  "fieldRef": {
+                    "fieldPath": "metadata.name"
+                  }
+                }
+              },
+              {
+                "name": "K6_PROFILE",
+                "value": "stress"
+              },
+              {
+                "name": "K6_NO_USAGE_REPORT",
+                "value": "true"
+              },
+              {
+                "name": "K6_PROMETHEUS_RW_SERVER_URL",
+                "value": "http://mimir:9009/api/v1/push"
+              },
+              {
+                "name": "K6_PROMETHEUS_RW_TREND_STATS",
+                "value": "p(95)"
+              },
+              {
+                "name": "K6_PROMETHEUS_RW_PUSH_INTERVAL",
+                "value": "5s"
+              },
+              {
+                "name": "K6_PROMETHEUS_RW_STALE_MARKERS",
+                "value": "true"
+              },
+              {
+                "name": "K6_TEST_EMAIL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "email",
+                    "name": "k6-test-account"
+                  }
+                }
+              },
+              {
+                "name": "K6_TEST_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "password",
+                    "name": "k6-test-account"
+                  }
+                }
+              }
+            ],
+            "resources": {
+              "requests": {
+                "cpu": "100m",
+                "memory": "128Mi"
+              },
+              "limits": {
+                "cpu": "1",
+                "memory": "512Mi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "results",
+                "mountPath": "/results"
+              }
+            ],
+            "command": [
+              "/bin/sh",
+              "-ec"
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "results",
+            "persistentVolumeClaim": {
+              "claimName": "k6-results"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
