@@ -4,7 +4,9 @@ Lab performa Toko Coquette dengan frontend Nginx, backend Express dan SQLite, se
 
 GitHub Actions membangun image frontend dan backend, lalu mengecek homepage, katalog, login, dan profil dengan database sementara. Workflow CI bisa dijalankan tanpa akses ke VM.
 
-Workflow **Prepare K3s release** dipicu manual dari branch `main`. GitHub Actions memeriksa kedua image dan menyimpannya sebagai artifact bertag commit. Untuk menerapkan release dari PowerShell, login ke GitHub CLI lalu jalankan `./deploy/Deploy-Lab.ps1 -RunId <id> -Vm <user@host>`. Perintah memakai akses SSH VM yang sudah ada. Deployment memakai SQLite yang sudah ada dan kembali ke image sebelumnya jika pemeriksaan HTTP gagal.
+Workflow **Prepare K3s release** dipicu manual dari branch `main`. GitHub Actions memeriksa kedua image dan menyimpannya sebagai artifact bertag commit. Dari checkout terbaru, login ke GitHub CLI lalu jalankan `./deploy/Deploy-Lab.ps1 -RunId <id> -Vm <user@host>`. Skrip memakai akses SSH VM yang sudah ada. Deployment memakai SQLite yang sudah ada dan kembali ke image sebelumnya jika rollout atau pemeriksaan HTTP gagal.
+
+Setelah aplikasi siap, skrip otomatis menjalankan **preflight 1 VU → Load Test → Stress Test** di K3s. Tiap tahap menunggu Job sebelumnya lulus. Jika tes gagal, skrip berhenti dan mencetak nama Job serta log terakhir, sementara versi aplikasi yang sudah siap tetap terpasang. Siapkan akun uji dan dependensi di bawah sebelum menjalankan deployment. Sisakan sekitar 45 menit untuk rangkaian k6 dan pertahankan sesi SSH.
 
 ## Isi repo
 
@@ -22,7 +24,11 @@ Workflow **Prepare K3s release** dipicu manual dari branch `main`. GitHub Action
 
 Setiap VU mengakses frontend, membuka `GET /`, login lewat `POST /api/auth/login`, membaca `GET /api/auth/me` dengan token login, lalu memanggil `GET /api/products` lima kali sebelum mengulang sesi. Pada tes utama, jeda antaraksi 1–3 detik. Ambang tiap endpoint adalah P95 < 1 detik, request gagal < 1%, dan check lulus ≥ 99%.
 
-Di namespace `k6-lab`, siapkan aplikasi, Mimir, PVC `k6-results`, serta Secret `k6-test-account` dengan key `email` dan `password` milik akun uji yang sudah terdaftar. Dari root checkout pada VM, jalankan preflight di Bash dengan `jq` dan `kubectl`.
+Di namespace `k6-lab`, siapkan aplikasi, Mimir, PVC `k6-results`, serta Secret `k6-test-account` dengan key `email` dan `password` milik akun uji yang sudah terdaftar.
+
+### Menjalankan tes secara terpisah
+
+Dari root checkout pada VM, jalankan preflight di Bash dengan `jq` dan `kubectl`.
 
 ```bash
 set -o pipefail

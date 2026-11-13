@@ -12,7 +12,7 @@ digest=$3
 base=/var/lib/coquette-cd
 install -d -m 0700 -o root -g root "$base"
 work=$(mktemp -d "$base/staging-XXXXXXXX")
-trap 'rm -f -- "$work/sqlite.db" "$work/sqlite.db-wal" "$work/sqlite.db-shm"; rmdir -- "$work"' EXIT
+trap 'rm -f -- "$work/sqlite.db" "$work/sqlite.db-wal" "$work/sqlite.db-shm" "$work/preflight.json"; rmdir -- "$work"' EXIT
 exec 9>"$base/deploy.lock"
 flock -n 9 || { echo 'A deployment is already running' >&2; exit 1; }
 (( $(df -Pm "$base" | awk 'NR==2 {print $4}') >= 2500 )) ||
@@ -24,6 +24,10 @@ frontend="coquette-ci.invalid/toko-frontend:$commit"
 limit=$((384 * 1024 * 1024))
 [[ $(stat -c %s "$archive") -le $limit ]] || { echo 'Image bundle is too large' >&2; exit 1; }
 printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --status
+script_dir=$(dirname -- "$(realpath -e -- "${BASH_SOURCE[0]}")")
+load_manifest="$script_dir/load-test.json"
+stress_manifest="$script_dir/stress-test.json"
+preflight_manifest="$work/preflight.json"
 
 check_no_running_test() {
   "${k[@]}" get jobs -o json | python3 -c '
@@ -34,14 +38,76 @@ if any(job.get("status", {}).get("active", 0) for job in jobs):
 '
 }
 check_no_running_test
+secret_ready=$("${k[@]}" get secret k6-test-account --ignore-not-found \
+  -o 'go-template={{if and (index .data "email") (index .data "password")}}ready{{end}}')
+[[ $secret_ready == ready ]] || {
+  echo 'Create Secret k6-test-account with the registered test account email and password before deploying.' >&2
+  exit 1
+}
+"${k[@]}" get service ecommerce-frontend mimir >/dev/null
+"${k[@]}" wait --for=jsonpath='{.status.phase}'=Bound pvc/k6-results --timeout=5s >/dev/null
+python3 - "$load_manifest" "$preflight_manifest" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as source:
+    job = json.load(source)
+job["metadata"]["generateName"] = "k6-login-preflight-"
+job["spec"]["activeDeadlineSeconds"] = 90
+job["spec"]["template"]["spec"]["containers"][0]["env"].append(
+    {"name": "K6_MODE", "value": "preflight"}
+)
+with open(sys.argv[2], "w") as target:
+    json.dump(job, target)
+PY
+for manifest in "$preflight_manifest" "$load_manifest" "$stress_manifest"; do
+  "${k[@]}" create --dry-run=server -f "$manifest" -o name >/dev/null
+done
+
+run_test() {
+  local title=$1 manifest=$2 timeout_seconds=$3 job conditions deadline
+  check_no_running_test
+  job=$("${k[@]}" create -f "$manifest" -o name)
+  printf '%s started: %s\n' "$title" "$job"
+  deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    if conditions=$("${k[@]}" --request-timeout=10s get "$job" \
+      -o 'jsonpath={range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}'); then
+      case " $conditions " in
+        *' Complete '*)
+          "${k[@]}" logs "$job" --tail=15 || true
+          printf '%s passed: %s\n' "$title" "$job"
+          return 0
+          ;;
+        *' Failed '*)
+          "${k[@]}" logs "$job" --tail=15 || true
+          printf '%s failed: %s\n' "$title" "$job" >&2
+          return 1
+          ;;
+      esac
+    fi
+    sleep 5
+  done
+  printf '%s did not finish in time: %s. Check the Job before retrying.\n' "$title" "$job" >&2
+  return 1
+}
+
+run_post_deploy_tests() {
+  run_test 'Preflight (1 VU)' "$preflight_manifest" 120
+  run_test 'Load Test' "$load_manifest" 1950
+  run_test 'Stress Test' "$stress_manifest" 960
+}
+
 old_backend=$("${k[@]}" get deploy ecommerce-backend -o 'jsonpath={.spec.template.spec.containers[?(@.name=="ecommerce-backend")].image}')
 old_frontend=$("${k[@]}" get deploy ecommerce-frontend -o 'jsonpath={.spec.template.spec.containers[?(@.name=="ecommerce-frontend")].image}')
 [[ -n $old_backend && -n $old_frontend ]]
 if [[ $old_backend == "$backend" && $old_frontend == "$frontend" ]]; then
   curl -fsS --max-time 8 -o /dev/null http://127.0.0.1:8080/api/products
   echo 'Commit is already deployed and responding'
+  run_post_deploy_tests
   exit 0
 fi
+run_post_deploy_tests
 
 gzip -dc -- "$archive" | timeout 240 /usr/local/bin/k3s ctr --namespace k8s.io images import --platform linux/amd64 - >/dev/null
 /usr/local/bin/k3s crictl inspecti "$backend" >/dev/null

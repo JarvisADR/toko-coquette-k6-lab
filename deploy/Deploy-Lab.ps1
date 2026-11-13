@@ -23,6 +23,7 @@ if ($run.conclusion -ne 'success' -or $run.head_branch -ne 'main' -or
 
 $name = 'coquette-upload-' + [Guid]::NewGuid().ToString('N')
 $upload = Join-Path ([IO.Path]::GetTempPath()) $name
+$testManifests = 'load-test.json', 'stress-test.json'
 $null = New-Item -ItemType Directory -Path $upload
 try {
     & $GitHubCli run download $RunId --repo $repo --name coquette-k3s-images --dir $upload
@@ -37,14 +38,18 @@ try {
         throw 'Release commit or archive checksum does not match.'
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'k3s-deploy.sh') -Destination $upload
+    $tests = Join-Path (Split-Path -Parent $PSScriptRoot) 'tests'
+    foreach ($file in $testManifests) {
+        Copy-Item -LiteralPath (Join-Path $tests $file) -Destination $upload
+    }
 
     & scp -o StrictHostKeyChecking=yes -r $upload "${Vm}:./"
     if ($LASTEXITCODE -ne 0) { throw 'Could not transfer the release to the VM.' }
-    $command = 'cd -- "$HOME/{0}" || exit 1; sudo bash ./k3s-deploy.sh ./images.tar.gz {1} {2}; result=$?; rm -f -- ./k3s-deploy.sh ./images.tar.gz ./release.txt; cd -- "$HOME" && rmdir -- "{0}"; exit "$result"' -f $name, $commit, $digest
+    $command = 'cd -- "$HOME/{0}" || exit 1; sudo bash ./k3s-deploy.sh ./images.tar.gz {1} {2}; result=$?; rm -f -- ./k3s-deploy.sh ./images.tar.gz ./release.txt ./load-test.json ./stress-test.json; cd -- "$HOME" && rmdir -- "{0}"; exit "$result"' -f $name, $commit, $digest
     & ssh -t -o StrictHostKeyChecking=yes $Vm $command
-    if ($LASTEXITCODE -ne 0) { throw 'VM deployment failed. Review the deployment output.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Deployment or post-deployment tests failed. Review the VM output.' }
 } finally {
-    foreach ($file in 'images.tar.gz', 'release.txt', 'k3s-deploy.sh') {
+    foreach ($file in ('images.tar.gz', 'release.txt', 'k3s-deploy.sh') + $testManifests) {
         $path = Join-Path $upload $file
         if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path }
     }
