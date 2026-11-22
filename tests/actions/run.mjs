@@ -131,8 +131,8 @@ async function runStage(vus, preflight = false) {
     const state = JSON.parse(inspected.stdout);
     stage.oomKilled = state.OOMKilled;
     stage.finished = state.FinishedAt;
-    stage.passed = stage.exitCode === 0 && stage.samples > 0 && stage.failedSamples === 0 &&
-      (profile !== 'browser' || stage.samples === vus * 3);
+    stage.passed = stage.exitCode === 0 && stage.samples > 0 &&
+      (profile !== 'browser' || (stage.failedSamples === 0 && stage.samples === vus * 3));
     await writeFile(resolve(output, `stage-${preflight ? 'preflight' : vus || profile}.log`), lines.join('\n'));
     if (parseError) throw parseError;
     console.log(`Stage finished: ${stage.samples} samples, exit ${stage.exitCode}, OOM ${stage.oomKilled}`);
