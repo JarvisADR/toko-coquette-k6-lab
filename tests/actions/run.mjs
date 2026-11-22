@@ -60,7 +60,7 @@ async function scriptForTest() {
       success: ok, code: ok ? 'OK' : 'FAILED', vu: __VU}));`);
   } else {
     replace("const base = 'http://ecommerce-frontend';", 'const base = __ENV.LAB_BASE_URL;');
-    if (quick) script = script.replace(/const SCENARIO = [\s\S]*?;\n\nimport http/, 'const SCENARIO = {executor: "constant-vus", vus: 1, duration: "10s", gracefulStop: "5s"};\n\nimport http');
+    if (quick) script = script.replace(/const SCENARIO = [\s\S]*?;\n\nimport http/, 'const SCENARIO = {executor: "per-vu-iterations", vus: 1, iterations: 8, maxDuration: "45s", gracefulStop: "5s"};\n\nimport http');
     replace('  return check(response, {', '  const validResponse = check(response, {');
     replace('  }, { name });\n}', `  }, { name });
   console.log('PERF_SAMPLE ' + JSON.stringify({timestamp: Date.now() - Math.ceil(response.timings.duration),

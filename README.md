@@ -20,7 +20,7 @@ Buka tab **Actions**, pilih **Load Test**, **Stress Test**, atau **Browser Test*
 
 Runner GitHub menjalankan k6 menuju aplikasi VM melalui alamat publik. Setiap run membuat satu akun demo baru untuk login dan profil. Kredensial acak hanya berlaku selama run dan tidak masuk artifact. Akun demo tetap tersimpan di database aplikasi. Alamat aplikasi dapat diubah lewat repository variable `LAB_BASE_URL`, dengan nilai awal `http://20.212.106.179:8080`.
 
-Ketiga workflow memakai satu antrean agar tes pada VM tidak berjalan bersamaan. Preflight 1 VU mengecek empat endpoint sebelum Load/Stress. Sampel preflight dikeluarkan dari statistik utama. Pada quick check, Load/Stress memakai 1 VU selama 10 detik dan Browser memakai 1 VU untuk tiga alur. Quick check memverifikasi jalur pipeline dan pelaporan.
+Ketiga workflow memakai satu antrean agar tes pada VM tidak berjalan bersamaan. Preflight 1 VU mengecek empat endpoint sebelum Load/Stress. Sampel preflight dikeluarkan dari statistik utama. Pada quick check, Load/Stress memakai 1 VU untuk delapan aksi dengan batas 45 detik dan Browser memakai 1 VU untuk tiga alur. Quick check memverifikasi jalur pipeline dan pelaporan.
 
 Setelah run, unduh artifact **jmeter-...**, ekstrak, lalu buka **jmeter/index.html**. Artifact memuat dashboard Apache JMeter, sampel CSV, hasil tiap tahap dalam `run.json`, dan log k6. Jika ambang k6 gagal, workflow tetap mencoba membuat dashboard sebelum mengunggah artifact. Stage browser yang terhenti tanpa sampel tercatat ada di `run.json`. Kolom byte, thread aktif, latency, dan waktu koneksi tidak direkam pada CSV. Statistik Browser mengukur satu alur lengkap.
 
