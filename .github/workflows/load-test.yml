@@ -1,0 +1,19 @@
+name: Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      quick_check:
+        description: Cek pipeline singkat sebelum menjalankan tes penuh
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    uses: ./.github/workflows/performance.yml
+    with:
+      profile: load
+      quick_check: ${{ inputs.quick_check }}

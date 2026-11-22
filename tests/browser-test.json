@@ -1,0 +1,102 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "namespace": "k6-lab",
+    "generateName": "k6-browser-",
+    "labels": {
+      "app.kubernetes.io/part-of": "k6-on-demand"
+    }
+  },
+  "spec": {
+    "backoffLimit": 0,
+    "activeDeadlineSeconds": 240,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "k6",
+          "k6-profile": "browser"
+        }
+      },
+      "spec": {
+        "restartPolicy": "Never",
+        "automountServiceAccountToken": false,
+        "securityContext": {
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "containers": [
+          {
+            "name": "k6",
+            "image": "grafana/k6:2.3.0-with-browser",
+            "imagePullPolicy": "IfNotPresent",
+            "command": [
+              "/bin/sh",
+              "-ec"
+            ],
+            "args": [
+              "set -eu\ncat >/tmp/journey.js <<'K6_SCRIPT'\nimport { browser } from 'k6/browser';\nimport { Rate, Trend } from 'k6/metrics';\n\nconst origin = 'http://ecommerce-frontend';\nconst email = __ENV.K6_TEST_EMAIL;\nconst password = __ENV.K6_TEST_PASSWORD;\nconst vus = Number(__ENV.K6_BROWSER_VUS || '1');\nconst iterations = vus === 1 ? 1 : 3;\nif (!Number.isSafeInteger(vus) || vus < 1 || !email || !password) {\n  throw new Error('Browser test requires a positive integer VU count and a test account');\n}\n\nconst passed = new Rate('browser_journey_passed');\nconst catalog = new Trend('catalog_visible_ms', true);\nconst loginApi = new Trend('login_api_response_ms', true);\nconst loginUi = new Trend('login_signed_in_ms', true);\nconst restored = new Trend('session_and_catalog_visible_ms', true);\n\nexport const options = {\n  scenarios: {\n    browser_journey: {\n      executor: 'per-vu-iterations',\n      vus, iterations, maxDuration: '100s', gracefulStop: '5s',\n      options: { browser: { type: 'chromium' } },\n    },\n  },\n  thresholds: {\n    browser_journey_passed: ['rate==1'],\n    iterations: ['count>=' + vus * iterations],\n  },\n};\n\nfunction requireOk(response, endpoint) {\n  if (!response || response.status() !== 200) {\n    throw new Error(endpoint + ' expected HTTP 200');\n  }\n}\n\nexport default async function () {\n  let page;\n  let step = 'launch Chromium';\n  let ok = false;\n  try {\n    page = await browser.newPage();\n    const product = page.locator('#app .grid .card:first-child h3');\n    const signedIn = page.locator('#auth .hi');\n    const wait = { state: 'visible', timeout: 12000 };\n    step = 'homepage and catalog';\n    let start = Date.now();\n    const [catalogResponse, home] = await Promise.all([\n      page.waitForResponse(origin + '/api/products', { timeout: 15000 }),\n      page.goto(origin + '/', { waitUntil: 'domcontentloaded', timeout: 15000 }),\n    ]);\n    requireOk(home, 'homepage');\n    requireOk(catalogResponse, 'catalog API');\n    await product.waitFor(wait);\n    catalog.add(Date.now() - start);\n\n    step = 'login form';\n    await page.locator('#auth button[onclick*=\"login\"]').click({ timeout: 12000 });\n    await page.locator('#a_email').fill(email, { timeout: 12000 });\n    await page.locator('#a_pass').fill(password, { timeout: 12000 });\n    step = 'login response and signed-in UI';\n    start = Date.now();\n    const [login] = await Promise.all([\n      page.waitForResponse(origin + '/api/auth/login', { timeout: 15000 })\n        .then((response) => {\n          loginApi.add(Date.now() - start);\n          return response;\n        }),\n      page.locator('#a_go').click({ timeout: 12000 }),\n    ]);\n    requireOk(login, 'login API');\n    await signedIn.waitFor(wait);\n    loginUi.add(Date.now() - start);\n\n    step = 'reload and verify authenticated profile and catalog';\n    start = Date.now();\n    const [profile, products] = await Promise.all([\n      page.waitForResponse(origin + '/api/auth/me', { timeout: 15000 }),\n      page.waitForResponse(origin + '/api/products', { timeout: 15000 }),\n      page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }),\n    ]);\n    requireOk(profile, 'profile API');\n    requireOk(products, 'catalog API');\n    await signedIn.waitFor(wait);\n    await product.waitFor(wait);\n    restored.add(Date.now() - start);\n    ok = true;\n  } catch (error) {\n    console.error('Browser journey failed at ' + step + ': ' + error.name);\n  } finally {\n    passed.add(ok);\n    if (page) await page.close();\n  }\n  await new Promise((resolve) => setTimeout(resolve, 1250));\n}\n\nexport function handleSummary(data) {\n  const names = ['browser_journey_passed','iterations','catalog_visible_ms','login_api_response_ms',\n    'login_signed_in_ms','session_and_catalog_visible_ms','browser_web_vital_lcp','browser_web_vital_fcp'];\n  const metrics = Object.fromEntries(names.filter((name) => data.metrics[name])\n    .map((name) => [name, data.metrics[name].values]));\n  return { stdout: 'BROWSER_RESULT ' + JSON.stringify({vus, planned: vus * iterations, metrics}) + '\\n' };\n}\nK6_SCRIPT\nread_cpu() { awk '$1==\"usage_usec\"{print $2}' /sys/fs/cgroup/cpu.stat; }\nread_throttle() { awk '$1==\"nr_throttled\"{print $2}' /sys/fs/cgroup/cpu.stat; }\ninitial=$(read_throttle)\n(\n  last=$(read_cpu)\n  while sleep 1; do\n    current=$(read_cpu)\n    printf '%s\\n' \"$((current-last))\"\n    last=$current\n  done\n) >/tmp/browser-cpu.log &\nmonitor=$!\nstatus=0\nk6 run --quiet /tmp/journey.js || status=$?\nkill \"$monitor\" 2>/dev/null || true\nwait \"$monitor\" 2>/dev/null || true\nawk 'BEGIN{m=0} $1>m{m=$1} END{printf \"RUNNER_CPU peak_mcpu=%.0f samples=%d\\n\",m/1000,NR}' /tmp/browser-cpu.log\nprintf 'RUNNER_MEMORY peak_bytes=%s throttled_periods=%s\\n' \"$(cat /sys/fs/cgroup/memory.peak)\" \"$(($(read_throttle)-initial))\"\nexit \"$status\"\n"
+            ],
+            "env": [
+              {
+                "name": "K6_NO_USAGE_REPORT",
+                "value": "true"
+              },
+              {
+                "name": "K6_BROWSER_VUS",
+                "value": "1"
+              },
+              {
+                "name": "K6_TEST_EMAIL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "k6-test-account",
+                    "key": "email"
+                  }
+                }
+              },
+              {
+                "name": "K6_TEST_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "k6-test-account",
+                    "key": "password"
+                  }
+                }
+              }
+            ],
+            "resources": {
+              "requests": {
+                "cpu": "500m",
+                "memory": "512Mi"
+              },
+              "limits": {
+                "cpu": "3",
+                "memory": "2Gi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false
+            },
+            "volumeMounts": [
+              {
+                "name": "shared-memory",
+                "mountPath": "/dev/shm"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "shared-memory",
+            "emptyDir": {
+              "medium": "Memory",
+              "sizeLimit": "256Mi"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

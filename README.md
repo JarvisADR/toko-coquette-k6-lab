@@ -8,6 +8,24 @@ Workflow **Prepare K3s release** dipicu manual dari branch `main`. GitHub Action
 
 Setelah aplikasi siap, skrip otomatis menjalankan **preflight 1 VU → Load Test → Stress Test** di K3s. Tiap tahap menunggu Job sebelumnya lulus. Jika tes gagal, skrip berhenti dan mencetak nama Job serta log terakhir, sementara versi aplikasi yang sudah siap tetap terpasang. Siapkan akun uji dan dependensi di bawah sebelum menjalankan deployment. Sisakan sekitar 45 menit untuk rangkaian k6 dan pertahankan sesi SSH.
 
+## Pipeline pengujian GitHub Actions
+
+Buka tab **Actions**, pilih **Load Test**, **Stress Test**, atau **Browser Test**, lalu klik **Run workflow** pada branch `main`. Centang **quick_check** untuk memeriksa pipeline dengan beban singkat. Tanpa centang, pipeline memakai konfigurasi penuh berikut.
+
+| Pipeline | Konfigurasi penuh |
+| --- | --- |
+| Load Test | 100 VU selama 30 menit |
+| Stress Test | 25 → 50 → 100 → 125 → 150 → 0 VU, 13 menit 30 detik |
+| Browser Test | 1–10 VU, tiga alur per VU, berhenti pada tahap pertama gagal |
+
+Runner GitHub menjalankan k6 menuju aplikasi VM melalui alamat publik. Setiap run membuat satu akun demo baru untuk login dan profil. Kredensial acak hanya berlaku selama run dan tidak masuk artifact. Akun demo tetap tersimpan di database aplikasi. Alamat aplikasi dapat diubah lewat repository variable `LAB_BASE_URL`, dengan nilai awal `http://20.212.106.179:8080`.
+
+Ketiga workflow memakai satu antrean agar tes pada VM tidak berjalan bersamaan. Preflight 1 VU mengecek empat endpoint sebelum Load/Stress. Sampel preflight dikeluarkan dari statistik utama. Pada quick check, Load/Stress memakai 1 VU selama 10 detik dan Browser memakai 1 VU untuk tiga alur. Quick check memverifikasi jalur pipeline dan pelaporan.
+
+Setelah run, unduh artifact **jmeter-...**, ekstrak, lalu buka **jmeter/index.html**. Artifact memuat dashboard Apache JMeter, sampel CSV, hasil tiap tahap dalam `run.json`, dan log k6. Jika ambang k6 gagal, workflow tetap mencoba membuat dashboard sebelum mengunggah artifact. Stage browser yang terhenti tanpa sampel tercatat ada di `run.json`. Kolom byte, thread aktif, latency, dan waktu koneksi tidak direkam pada CSV. Statistik Browser mengukur satu alur lengkap.
+
+Waktu respons mencakup jaringan dari runner GitHub ke Azure. `run.json` mencatat commit skrip pengujian dan resource runner. Versi aplikasi di VM mengikuti deployment yang sedang berjalan.
+
 ## Isi repo
 
 - `app/` berisi kode aplikasi, Dockerfile, dan instrumentasi tracing.
