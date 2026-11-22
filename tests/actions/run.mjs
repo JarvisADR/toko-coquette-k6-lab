@@ -7,16 +7,23 @@ import { resolve } from 'node:path';
 
 const profile = process.argv[2];
 if (!['load', 'stress', 'browser'].includes(profile)) throw Error('Invalid test profile');
-const quick = process.env.QUICK_CHECK === 'true';
+const manifest = JSON.parse(await readFile(`tests/${profile}-test.json`, 'utf8'));
+const container = manifest.spec.template.spec.containers[0];
+const limits = container.resources.limits;
+const cpuLimit = limits.cpu.endsWith('m') ? String(Number(limits.cpu.slice(0, -1)) / 1000) : limits.cpu;
+const memoryLimit = limits.memory.replace(/([KMG])i$/, (_, unit) => unit.toLowerCase());
+const sharedMemory = manifest.spec.template.spec.volumes
+  .find(volume => volume.name === 'shared-memory')?.emptyDir.sizeLimit;
 const base = new URL(process.env.LAB_BASE_URL || 'http://20.212.106.179:8080');
 if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
     base.pathname !== '/' || base.search || base.hash) throw Error('Use the application origin as LAB_BASE_URL');
 const output = resolve('results');
 await mkdir(output, { recursive: true });
 const outcome = {
-  profile, quick, target: base.origin, started: new Date().toISOString(),
+  profile, target: base.origin, started: new Date().toISOString(),
   testCommit: process.env.GITHUB_SHA || 'local', deployedAppCommit: 'not detected',
-  generator: { location: 'GitHub-hosted runner', cpus: cpus().length, memoryBytes: totalmem() },
+  generator: { location: 'GitHub-hosted runner', cpus: cpus().length, memoryBytes: totalmem(),
+    image: container.image, limits },
   stages: [], samples: 0, result: 'failed',
 };
 const header = 'timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage,bytes,sentBytes,grpThreads,allThreads,URL,Latency,IdleTime,Connect';
@@ -41,8 +48,7 @@ async function health() {
 }
 
 async function scriptForTest() {
-  const manifest = JSON.parse(await readFile(`tests/${profile === 'browser' ? 'browser' : profile}-test.json`, 'utf8'));
-  const wrapper = manifest.spec.template.spec.containers[0].args.join('\n');
+  const wrapper = container.args.join('\n');
   const match = wrapper.match(/<<'K6_SCRIPT'\n([\s\S]*?)\nK6_SCRIPT/);
   if (!match) throw Error('Cannot locate K6_SCRIPT');
   let script = match[1];
@@ -60,7 +66,6 @@ async function scriptForTest() {
       success: ok, code: ok ? 'OK' : 'FAILED', vu: __VU}));`);
   } else {
     replace("const base = 'http://ecommerce-frontend';", 'const base = __ENV.LAB_BASE_URL;');
-    if (quick) script = script.replace(/const SCENARIO = [\s\S]*?;\n\nimport http/, 'const SCENARIO = {executor: "per-vu-iterations", vus: 1, iterations: 8, maxDuration: "45s", gracefulStop: "5s"};\n\nimport http');
     replace('  return check(response, {', '  const validResponse = check(response, {');
     replace('  }, { name });\n}', `  }, { name });
   console.log('PERF_SAMPLE ' + JSON.stringify({timestamp: Date.now() - Math.ceil(response.timings.duration),
@@ -95,12 +100,13 @@ async function runStage(vus, preflight = false) {
   const stage = { vus, preflight, samples: 0, failedSamples: 0, started: new Date().toISOString() };
   outcome.stages.push(stage);
   activeContainer = `coquette-perf-${profile}-${randomBytes(5).toString('hex')}`;
-  const args = ['run', '--name', activeContainer, '--cpus=3', '--memory=2g', '--memory-swap=2g', '--shm-size=256m',
+  const args = ['run', '--name', activeContainer, `--cpus=${cpuLimit}`, `--memory=${memoryLimit}`,
+    `--memory-swap=${memoryLimit}`, ...(sharedMemory ? [`--shm-size=${sharedMemory.replace(/Mi$/, 'm')}`] : []),
     '--user', `${process.getuid()}:${process.getgid()}`, '-v', `${output}:/results`,
     '-e', 'K6_TEST_EMAIL', '-e', 'K6_TEST_PASSWORD', '-e', 'LAB_BASE_URL', '-e', 'POD_NAME',
     '-e', 'K6_NO_USAGE_REPORT=true', '-e', 'HOME=/tmp', '-e', 'XDG_CONFIG_HOME=/tmp', '-e', 'XDG_CACHE_HOME=/tmp',
     '-e', `K6_MODE=${preflight ? 'preflight' : 'main'}`,
-    '-e', `K6_BROWSER_VUS=${vus}`, profile === 'browser' ? 'grafana/k6:2.3.0-with-browser' : 'grafana/k6:2.3.0',
+    '-e', `K6_BROWSER_VUS=${vus}`, container.image,
     'run', '--quiet', '/results/test.js'];
   console.log(`Starting ${preflight ? 'preflight' : profile} ${vus ? vus + ' VU' : ''}`);
   const child = spawn('docker', args, {
@@ -120,7 +126,7 @@ async function runStage(vus, preflight = false) {
   consume(child.stdout);
   consume(child.stderr);
   const timer = setTimeout(() => spawnSync('docker', ['kill', activeContainer]),
-    profile === 'load' && !quick && !preflight ? 1950000 : profile === 'stress' && !quick && !preflight ? 960000 : 150000);
+    (preflight ? 90 : manifest.spec.activeDeadlineSeconds) * 1000);
   try {
     stage.exitCode = await new Promise((resolve, reject) => {
       child.on('error', reject);
@@ -159,7 +165,7 @@ try {
   if (!login.token) throw Error('Test account login failed');
   await scriptForTest();
   if (profile !== 'browser' && !await runStage(0, true)) throw Error('Preflight failed');
-  const stages = profile === 'browser' ? Array.from({ length: quick ? 1 : 10 }, (_, i) => i + 1) : [0];
+  const stages = profile === 'browser' ? Array.from({ length: 10 }, (_, i) => i + 1) : [0];
   for (const vus of stages) {
     if (!await runStage(vus)) { failed = true; break; }
   }

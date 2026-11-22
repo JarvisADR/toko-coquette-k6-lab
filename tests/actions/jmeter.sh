@@ -8,7 +8,7 @@ digest=$(curl --fail --location --retry 3 --max-time 30 "$source.sha512" | grep 
 [[ ${#digest} == 128 ]]
 printf '%s  %s\n' "$digest" "$archive" | sha512sum --check --status
 tar -xzf "$archive" -C "$RUNNER_TEMP"
-title=$(node -e 'const r=require("./results/run.json"); console.log(`${r.profile} | ${r.quick ? "QUICK CHECK" : "FULL TEST"} | ${r.result} | GitHub runner to Azure VM`);')
+title=$(node -e 'const r=require("./results/run.json"); console.log(`${r.profile} | FULL TEST | ${r.result} | GitHub runner to Azure VM`);')
 "$RUNNER_TEMP/apache-jmeter-5.6.3/bin/jmeter" -g results/samples.csv -o results/jmeter \
   -j "$RUNNER_TEMP/jmeter-report.log" \
   "-Jjmeter.reportgenerator.report_title=$title" \

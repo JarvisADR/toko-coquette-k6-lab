@@ -10,7 +10,7 @@ Setelah deployment selesai, jalankan pengujian performa dari tab **Actions** ses
 
 ## Pipeline pengujian GitHub Actions
 
-Buka tab **Actions**, pilih **Load Test**, **Stress Test**, atau **Browser Test**, lalu klik **Run workflow** pada branch `main`. Centang **quick_check** untuk memeriksa pipeline dengan beban singkat. Tanpa centang, pipeline memakai konfigurasi penuh berikut.
+Buka tab **Actions**, pilih **Load Test**, **Stress Test**, atau **Browser Test**, lalu klik **Run workflow** pada branch `main`. Pipeline memakai konfigurasi berikut.
 
 | Pipeline | Konfigurasi penuh |
 | --- | --- |
@@ -20,7 +20,7 @@ Buka tab **Actions**, pilih **Load Test**, **Stress Test**, atau **Browser Test*
 
 Runner GitHub menjalankan k6 menuju aplikasi VM melalui alamat publik. Setiap run membuat satu akun demo baru untuk login dan profil. Kredensial acak hanya berlaku selama run dan tidak masuk artifact. Akun demo tetap tersimpan di database aplikasi. Alamat aplikasi dapat diubah lewat repository variable `LAB_BASE_URL`, dengan nilai awal `http://20.212.106.179:8080`.
 
-Ketiga workflow memakai satu antrean agar tes pada VM tidak berjalan bersamaan. Preflight 1 VU mengecek empat endpoint sebelum Load/Stress. Sampel preflight dikeluarkan dari statistik utama. Pada quick check, Load/Stress memakai 1 VU untuk delapan aksi dengan batas 45 detik dan Browser memakai 1 VU untuk tiga alur. Quick check memverifikasi jalur pipeline dan pelaporan.
+Ketiga workflow memakai satu antrean agar tes pada VM tidak berjalan bersamaan. Preflight 1 VU mengecek empat endpoint sebelum Load/Stress. Sampel preflight dikeluarkan dari statistik utama. Batas k6 mengikuti manifest pengujian K3s. Load dan Stress mendapat 1 CPU dan 512 MiB RAM. Browser mendapat 3 CPU dan 2 GiB RAM.
 
 Setelah run, unduh artifact **jmeter-...**, ekstrak, lalu buka **jmeter/index.html**. Artifact memuat dashboard Apache JMeter, sampel CSV, hasil tiap tahap dalam `run.json`, dan log k6. Jika ambang k6 gagal, workflow tetap mencoba membuat dashboard sebelum mengunggah artifact. Stage browser yang terhenti tanpa sampel tercatat ada di `run.json`. Kolom byte, thread aktif, latency, dan waktu koneksi tidak direkam pada CSV. Statistik Browser mengukur satu alur lengkap.
 

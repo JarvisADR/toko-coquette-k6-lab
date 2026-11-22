@@ -2,11 +2,6 @@ name: Load Test
 
 on:
   workflow_dispatch:
-    inputs:
-      quick_check:
-        description: Cek pipeline singkat sebelum menjalankan tes penuh
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -27,5 +22,4 @@ jobs:
       - uses: ./.github/actions/performance
         with:
           profile: load
-          quick_check: ${{ inputs.quick_check }}
           base_url: ${{ vars.LAB_BASE_URL || 'http://20.212.106.179:8080' }}

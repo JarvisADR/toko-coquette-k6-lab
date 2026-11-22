@@ -5,9 +5,6 @@ inputs:
   profile:
     description: load, stress, or browser
     required: true
-  quick_check:
-    description: Run a short pipeline check
-    default: 'false'
   base_url:
     description: Public origin of the lab application
     required: true
@@ -15,21 +12,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Pull k6
-      shell: bash
-      env:
-        TEST_PROFILE: ${{ inputs.profile }}
-      run: |
-        if [ "$TEST_PROFILE" = browser ]; then
-          docker pull grafana/k6:2.3.0-with-browser
-        else
-          docker pull grafana/k6:2.3.0
-        fi
     - name: Run k6
       shell: bash
       env:
         LAB_BASE_URL: ${{ inputs.base_url }}
-        QUICK_CHECK: ${{ inputs.quick_check }}
         TEST_PROFILE: ${{ inputs.profile }}
       run: node tests/actions/run.mjs "$TEST_PROFILE"
     - name: Generate Apache JMeter dashboard
