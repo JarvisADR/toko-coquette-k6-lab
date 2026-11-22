@@ -98,7 +98,8 @@ async function runStage(vus, preflight = false) {
   const args = ['run', '--name', activeContainer, '--cpus=3', '--memory=2g', '--memory-swap=2g', '--shm-size=256m',
     '--user', `${process.getuid()}:${process.getgid()}`, '-v', `${output}:/results`,
     '-e', 'K6_TEST_EMAIL', '-e', 'K6_TEST_PASSWORD', '-e', 'LAB_BASE_URL', '-e', 'POD_NAME',
-    '-e', 'K6_NO_USAGE_REPORT=true', '-e', `K6_MODE=${preflight ? 'preflight' : 'main'}`,
+    '-e', 'K6_NO_USAGE_REPORT=true', '-e', 'HOME=/tmp', '-e', 'XDG_CONFIG_HOME=/tmp', '-e', 'XDG_CACHE_HOME=/tmp',
+    '-e', `K6_MODE=${preflight ? 'preflight' : 'main'}`,
     '-e', `K6_BROWSER_VUS=${vus}`, profile === 'browser' ? 'grafana/k6:2.3.0-with-browser' : 'grafana/k6:2.3.0',
     'run', '--quiet', '/results/test.js'];
   console.log(`Starting ${preflight ? 'preflight' : profile} ${vus ? vus + ' VU' : ''}`);
