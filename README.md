@@ -6,7 +6,7 @@ GitHub Actions membangun image frontend dan backend, lalu mengecek homepage, kat
 
 Workflow **Prepare K3s release** dipicu manual dari branch `main`. GitHub Actions memeriksa kedua image dan menyimpannya sebagai artifact bertag commit. Dari checkout terbaru, login ke GitHub CLI lalu jalankan `./deploy/Deploy-Lab.ps1 -RunId <id> -Vm <user@host>`. Skrip memakai akses SSH VM yang sudah ada. Deployment memakai SQLite yang sudah ada dan kembali ke image sebelumnya jika rollout atau pemeriksaan HTTP gagal.
 
-Setelah aplikasi siap, skrip otomatis menjalankan **preflight 1 VU → Load Test → Stress Test** di K3s. Tiap tahap menunggu Job sebelumnya lulus. Jika tes gagal, skrip berhenti dan mencetak nama Job serta log terakhir, sementara versi aplikasi yang sudah siap tetap terpasang. Siapkan akun uji dan dependensi di bawah sebelum menjalankan deployment. Sisakan sekitar 45 menit untuk rangkaian k6 dan pertahankan sesi SSH.
+Setelah deployment selesai, jalankan pengujian performa dari tab **Actions** sesuai kebutuhan.
 
 ## Pipeline pengujian GitHub Actions
 
