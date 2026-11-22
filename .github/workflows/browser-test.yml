@@ -13,7 +13,19 @@ permissions:
 
 jobs:
   performance:
-    uses: ./.github/workflows/performance.yml
-    with:
-      profile: browser
-      quick_check: ${{ inputs.quick_check }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    concurrency:
+      group: coquette-lab-performance
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/performance
+        with:
+          profile: browser
+          quick_check: ${{ inputs.quick_check }}
+          base_url: ${{ vars.LAB_BASE_URL || 'http://20.212.106.179:8080' }}
